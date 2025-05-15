@@ -23,6 +23,7 @@ spec:
                 - '-c'
                 - |
                   MODEL_LIST="basic_gnn_edgecnn"
+                  TEST_TIMEOUT=1000
 
                   # Start with tensor-fusion disabled
                   echo "=== Setting tensor-fusion to DISABLED ==="
@@ -41,9 +42,9 @@ spec:
                   for MODEL in $MODEL_LIST; do
                       echo "Testing model: $MODEL with tensor-fusion DISABLED"
                       echo "---------------------------------------------------------"
-                      TEST_CMD="python3 test.py -k \"test_${MODEL}_eval_cuda\" -t 1000"
+                      TEST_CMD="python3 test.py -k \"test_${MODEL}_eval_cuda\" -t ${TEST_TIMEOUT}"
                       echo "Executing: $TEST_CMD"
-                      TEST_OUTPUT=$(timeout 7200 kubectl exec -n default $POD_NAME -- python3 test.py -k "test_${MODEL}_eval_cuda" -t 1000 2>&1)
+                      TEST_OUTPUT=$(timeout 7200 kubectl exec -n default $POD_NAME -- python3 test.py -k "test_${MODEL}_eval_cuda" -t ${TEST_TIMEOUT} 2>&1)
                       EXIT_STATUS=$?
                       if [ $EXIT_STATUS -ne 0 ]; then
                           echo "Error: Test command failed or timed out for model $MODEL (exit status: $EXIT_STATUS)"
@@ -100,9 +101,9 @@ spec:
                   for MODEL in $MODEL_LIST; do
                       echo "Testing model: $MODEL with tensor-fusion ENABLED"
                       echo "---------------------------------------------------------"
-                      TEST_CMD="python3 test.py -k \"test_${MODEL}_eval_cuda\" -t 1000"
+                      TEST_CMD="python3 test.py -k \"test_${MODEL}_eval_cuda\" -t ${TEST_TIMEOUT}"
                       echo "Executing: $TEST_CMD"
-                      TEST_OUTPUT=$(timeout 7200 kubectl exec -n default $POD_NAME -- python3 test.py -k "test_${MODEL}_eval_cuda" -t 1000 2>&1)
+                      TEST_OUTPUT=$(timeout 7200 kubectl exec -n default $POD_NAME -- python3 test.py -k "test_${MODEL}_eval_cuda" -t ${TEST_TIMEOUT} 2>&1)
                       EXIT_STATUS=$?
                       if [ $EXIT_STATUS -ne 0 ]; then
                           echo "Error: Test command failed or timed out for model $MODEL (exit status: $EXIT_STATUS)"
