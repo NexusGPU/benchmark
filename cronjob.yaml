@@ -22,7 +22,7 @@ spec:
                 - /bin/sh
                 - '-c'
                 - |
-                  MODEL_LIST="basic_gnn_edgecnn"
+                  MODEL_LIST="basic_gnn_edgecnn BERT_pytorch basic_gnn_gcn basic_gnn_gin drq hf_Albert hf_Bart hf_Bert lennard_jones llama llama_v2_7b_16h"
                   TEST_TIMEOUT=1000
 
                   # Start with tensor-fusion disabled
