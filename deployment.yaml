@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torchbench
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: torchbench
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: torchbench
+        tensor-fusion.ai/enabled: 'true'
+      annotations:
+        tensor-fusion.ai/generate-workload: 'true'
+        tensor-fusion.ai/gpupool: shared-tensor-fusion-cluster-shared
+        tensor-fusion.ai/inject-container: torchbench
+        tensor-fusion.ai/replicas: '1'
+        tensor-fusion.ai/tflops-limit: '71.2' ## full tflops of your GPU
+        tensor-fusion.ai/tflops-request: '71.2' ## full tflops of your GPU
+        tensor-fusion.ai/vram-limit: 24Gi ## full vram of your GPU
+        tensor-fusion.ai/vram-request: 24Gi ## full vram of your GPU
+        tensor-fusion.ai/workload: torchbench
+    spec:
+      containers:
+        - name: torchbench
+          image: >-
+            crpi-wpzfqfci37r0ad3n.cn-hangzhou.personal.cr.aliyuncs.com/tensorfusionrobin/tensorfusionrobin:latest ## latest version of self-built torchbench image
+          command:
+            - python
+          args:
+            - '-m'
+            - http.server
+            - '80'
+          ports:
+            - containerPort: 80
+              protocol: TCP
+          resources:
+            limits:
+              cpu: '2'
+              memory: 4Gi
+            requests:
+              cpu: '1'
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+              scheme: HTTP
+            initialDelaySeconds: 30
+            timeoutSeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+              scheme: HTTP
+            initialDelaySeconds: 5
+            timeoutSeconds: 1
+            periodSeconds: 10
+            successThreshold: 1
+            failureThreshold: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          imagePullPolicy: Always
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      nodeSelector:
+        kubernetes.io/hostname: gpu-2
+      securityContext: {}
+      schedulerName: default-scheduler
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
