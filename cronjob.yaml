@@ -1,0 +1,140 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torchbench-test-runner
+  namespace: default
+spec:
+  schedule: 0 0 * * *
+  concurrencyPolicy: Allow
+  suspend: false
+  jobTemplate:
+    metadata:
+      creationTimestamp: null
+    spec:
+      template:
+        metadata:
+          creationTimestamp: null
+        spec:
+          containers:
+            - name: torchbench-test-runner
+              image: bitnami/kubectl:latest
+              command:
+                - /bin/sh
+                - '-c'
+                - |
+                  MODEL_LIST="basic_gnn_edgecnn"
+
+                  # Start with tensor-fusion disabled
+                  echo "=== Setting tensor-fusion to DISABLED ==="
+                  kubectl patch deployment torchbench -n default --type=json -p='[{"op": "replace", "path": "/spec/template/metadata/labels/tensor-fusion.ai~1enabled", "value": "false"}]'
+
+                  # Wait for deployment to roll out
+                  echo "Waiting for deployment to update..."
+                  kubectl rollout status deployment/torchbench -n default
+
+                  # Get the name of the pod
+                  POD_NAME=$(kubectl get pod -n default -l app=torchbench -o jsonpath="{.items[0].metadata.name}")
+                  echo "Using pod: $POD_NAME"
+
+                  # Run tests with tensor-fusion disabled
+                  echo "=== Running tests with tensor-fusion DISABLED ==="
+                  for MODEL in $MODEL_LIST; do
+                      echo "Testing model: $MODEL with tensor-fusion DISABLED"
+                      echo "---------------------------------------------------------"
+                      TEST_CMD="python3 test.py -k \"test_${MODEL}_eval_cuda\" -t 1000"
+                      echo "Executing: $TEST_CMD"
+                      TEST_OUTPUT=$(timeout 7200 kubectl exec -n default $POD_NAME -- python3 test.py -k "test_${MODEL}_eval_cuda" -t 1000 2>&1)
+                      EXIT_STATUS=$?
+                      if [ $EXIT_STATUS -ne 0 ]; then
+                          echo "Error: Test command failed or timed out for model $MODEL (exit status: $EXIT_STATUS)"
+                          echo "TEST_OUTPUT: $TEST_OUTPUT"
+                          continue
+                      fi
+                      MODEL_INIT=$(echo "$TEST_OUTPUT" | grep -o "Model initialization time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Model initialization time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      EVAL_TIME=$(echo "$TEST_OUTPUT" | grep -o "Evaluation time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Evaluation time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      CLEANUP_TIME=$(echo "$TEST_OUTPUT" | grep -o "Cleanup time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Cleanup time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      TOTAL_TIME=$(echo "$TEST_OUTPUT" | grep -o "Total time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Total time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      if [ "$MODEL_INIT" = "N/A" ] || [ "$EVAL_TIME" = "N/A" ] || [ "$CLEANUP_TIME" = "N/A" ] || [ "$TOTAL_TIME" = "N/A" ]; then
+                          echo "Warning: Failed to extract some timing information for model $MODEL"
+                          echo "TEST_OUTPUT: $TEST_OUTPUT"
+                      fi
+                      echo "Model initialization time: $MODEL_INIT seconds"
+                      echo "Evaluation time: $EVAL_TIME seconds"
+                      echo "Cleanup time: $CLEANUP_TIME seconds"
+                      echo "Total time: $TOTAL_TIME seconds"
+                      echo "---------------------------------------------------------"
+                  done
+
+                  # Enable tensor-fusion
+                  echo "=== Setting tensor-fusion to ENABLED ==="
+                  kubectl patch deployment torchbench -n default --type=json -p='[{"op": "replace", "path": "/spec/template/metadata/labels/tensor-fusion.ai~1enabled", "value": "true"}]'
+
+                  # Wait for deployment to roll out
+                  echo "Waiting for deployment to update..."
+                  kubectl rollout status deployment/torchbench -n default
+
+                  # Wait for old pod to terminate and new pod to be ready
+                  echo "Waiting for new pod to be ready..."
+                  sleep 10  # Give some time for old pod to start terminating
+                  
+                  # Get the name of the new pod (using creationTimestamp to get the newest one)
+                  POD_NAME=$(kubectl get pod -n default -l app=torchbench --sort-by=.metadata.creationTimestamp -o jsonpath="{.items[-1].metadata.name}")
+                  echo "Using pod: $POD_NAME"
+                  
+                  # Verify the pod is ready
+                  POD_STATUS=$(kubectl get pod $POD_NAME -n default -o jsonpath="{.status.phase}")
+                  if [ "$POD_STATUS" != "Running" ]; then
+                      echo "Error: New pod is not in Running state (current state: $POD_STATUS)"
+                      exit 1
+                  fi
+                  
+                  # Additional check to ensure pod is ready
+                  READY=$(kubectl get pod $POD_NAME -n default -o jsonpath="{.status.containerStatuses[0].ready}")
+                  if [ "$READY" != "true" ]; then
+                      echo "Error: New pod is not ready"
+                      exit 1
+                  fi
+
+                  # Run tests with tensor-fusion enabled
+                  echo "=== Running tests with tensor-fusion ENABLED ==="
+                  for MODEL in $MODEL_LIST; do
+                      echo "Testing model: $MODEL with tensor-fusion ENABLED"
+                      echo "---------------------------------------------------------"
+                      TEST_CMD="python3 test.py -k \"test_${MODEL}_eval_cuda\" -t 1000"
+                      echo "Executing: $TEST_CMD"
+                      TEST_OUTPUT=$(timeout 7200 kubectl exec -n default $POD_NAME -- python3 test.py -k "test_${MODEL}_eval_cuda" -t 1000 2>&1)
+                      EXIT_STATUS=$?
+                      if [ $EXIT_STATUS -ne 0 ]; then
+                          echo "Error: Test command failed or timed out for model $MODEL (exit status: $EXIT_STATUS)"
+                          echo "TEST_OUTPUT: $TEST_OUTPUT"
+                          continue
+                      fi
+                      MODEL_INIT=$(echo "$TEST_OUTPUT" | grep -o "Model initialization time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Model initialization time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      EVAL_TIME=$(echo "$TEST_OUTPUT" | grep -o "Evaluation time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Evaluation time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      CLEANUP_TIME=$(echo "$TEST_OUTPUT" | grep -o "Cleanup time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Cleanup time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      TOTAL_TIME=$(echo "$TEST_OUTPUT" | grep -o "Total time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Total time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      if [ "$MODEL_INIT" = "N/A" ] || [ "$EVAL_TIME" = "N/A" ] || [ "$CLEANUP_TIME" = "N/A" ] || [ "$TOTAL_TIME" = "N/A" ]; then
+                          echo "Warning: Failed to extract some timing information for model $MODEL"
+                          echo "TEST_OUTPUT: $TEST_OUTPUT"
+                      fi
+                      echo "Model initialization time: $MODEL_INIT seconds"
+                      echo "Evaluation time: $EVAL_TIME seconds"
+                      echo "Cleanup time: $CLEANUP_TIME seconds"
+                      echo "Total time: $TOTAL_TIME seconds"
+                      echo "---------------------------------------------------------"
+                  done
+
+                  echo "All tests completed!"
+              resources: {}
+              terminationMessagePath: /dev/termination-log
+              terminationMessagePolicy: File
+              imagePullPolicy: Always
+          restartPolicy: OnFailure
+          terminationGracePeriodSeconds: 30
+          dnsPolicy: ClusterFirst
+          serviceAccountName: cronjob-sa
+          serviceAccount: cronjob-sa
+          securityContext: {}
+          schedulerName: default-scheduler
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
