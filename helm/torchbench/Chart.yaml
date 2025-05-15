@@ -1,0 +1,6 @@
+apiVersion: v2
+name: torchbench
+description: A Helm chart for TensorFusion Remote/Local vGPU Benchmark
+type: application
+version: 0.1.0
+appVersion: "1.0.0" 

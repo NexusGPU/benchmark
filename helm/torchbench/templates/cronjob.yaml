@@ -1,0 +1,173 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "torchbench.fullname" . }}-test-runner
+  labels:
+    {{- include "torchbench.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjob.schedule | quote }}
+  concurrencyPolicy: {{ .Values.cronjob.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: {{ include "torchbench.serviceAccountName" . }}
+          containers:
+            - name: torchbench-test-runner
+              image: "{{ .Values.cronjob.image.repository }}:{{ .Values.cronjob.image.tag }}"
+              imagePullPolicy: {{ .Values.cronjob.image.pullPolicy }}
+              command:
+                - /bin/bash
+                - '-c'
+                - |
+                  MODEL_LIST="basic_gnn_edgecnn BERT_pytorch basic_gnn_gcn basic_gnn_gin drq hf_Albert hf_Bart hf_Bert lennard_jones llama llama_v2_7b_16h"
+                  TEST_TIMEOUT=1000
+
+                  # Create arrays to store results
+                  declare -A disabled_results
+                  declare -A enabled_results
+
+                  # Start with tensor-fusion disabled
+                  echo "=== Setting tensor-fusion to DISABLED ==="
+                  kubectl patch deployment {{ include "torchbench.fullname" . }} --type=json -p='[{"op": "replace", "path": "/spec/template/metadata/labels/tensor-fusion.ai~1enabled", "value": "false"}]'
+
+                  # Wait for deployment to roll out
+                  echo "Waiting for deployment to update..."
+                  kubectl rollout status deployment/{{ include "torchbench.fullname" . }}
+
+                  # Get the name of the pod
+                  POD_NAME=$(kubectl get pod -l app={{ include "torchbench.fullname" . }} -o jsonpath="{.items[0].metadata.name}")
+                  echo "Using pod: $POD_NAME"
+
+                  # Run tests with tensor-fusion disabled
+                  echo "=== Running tests with tensor-fusion DISABLED ==="
+                  for MODEL in $MODEL_LIST; do
+                      echo "Testing model: $MODEL with tensor-fusion DISABLED"
+                      echo "---------------------------------------------------------"
+                      TEST_CMD="python3 test.py -k \"test_${MODEL}_eval_cuda\" -t ${TEST_TIMEOUT}"
+                      echo "Executing: $TEST_CMD"
+                      TEST_OUTPUT=$(timeout 7200 kubectl exec $POD_NAME -- python3 test.py -k "test_${MODEL}_eval_cuda" -t ${TEST_TIMEOUT} 2>&1)
+                      EXIT_STATUS=$?
+                      if [ $EXIT_STATUS -ne 0 ]; then
+                          echo "Error: Test command failed or timed out for model $MODEL (exit status: $EXIT_STATUS)"
+                          echo "TEST_OUTPUT: $TEST_OUTPUT"
+                          continue
+                      fi
+                      MODEL_INIT=$(echo "$TEST_OUTPUT" | grep -o "Model initialization time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Model initialization time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      EVAL_TIME=$(echo "$TEST_OUTPUT" | grep -o "Evaluation time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Evaluation time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      CLEANUP_TIME=$(echo "$TEST_OUTPUT" | grep -o "Cleanup time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Cleanup time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      TOTAL_TIME=$(echo "$TEST_OUTPUT" | grep -o "Total time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Total time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      
+                      # Store results
+                      disabled_results["${MODEL}_init"]=$MODEL_INIT
+                      disabled_results["${MODEL}_eval"]=$EVAL_TIME
+                      disabled_results["${MODEL}_cleanup"]=$CLEANUP_TIME
+                      disabled_results["${MODEL}_total"]=$TOTAL_TIME
+                      
+                      if [ "$MODEL_INIT" = "N/A" ] || [ "$EVAL_TIME" = "N/A" ] || [ "$CLEANUP_TIME" = "N/A" ] || [ "$TOTAL_TIME" = "N/A" ]; then
+                          echo "Warning: Failed to extract some timing information for model $MODEL"
+                          echo "TEST_OUTPUT: $TEST_OUTPUT"
+                      fi
+                      echo "Model initialization time: $MODEL_INIT seconds"
+                      echo "Evaluation time: $EVAL_TIME seconds"
+                      echo "Cleanup time: $CLEANUP_TIME seconds"
+                      echo "Total time: $TOTAL_TIME seconds"
+                      echo "---------------------------------------------------------"
+                  done
+
+                  # Enable tensor-fusion
+                  echo "=== Setting tensor-fusion to ENABLED ==="
+                  kubectl patch deployment {{ include "torchbench.fullname" . }} --type=json -p='[{"op": "replace", "path": "/spec/template/metadata/labels/tensor-fusion.ai~1enabled", "value": "true"}]'
+
+                  # Wait for deployment to roll out
+                  echo "Waiting for deployment to update..."
+                  kubectl rollout status deployment/{{ include "torchbench.fullname" . }}
+
+                  # Wait for old pod to terminate and new pod to be ready
+                  echo "Waiting for new pod to be ready..."
+                  sleep 10  # Give some time for old pod to start terminating
+                  
+                  # Get the name of the new pod (using creationTimestamp to get the newest one)
+                  POD_NAME=$(kubectl get pod -l app={{ include "torchbench.fullname" . }} --sort-by=.metadata.creationTimestamp -o jsonpath="{.items[-1].metadata.name}")
+                  echo "Using pod: $POD_NAME"
+                  
+                  # Verify the pod is ready
+                  POD_STATUS=$(kubectl get pod $POD_NAME -o jsonpath="{.status.phase}")
+                  if [ "$POD_STATUS" != "Running" ]; then
+                      echo "Error: New pod is not in Running state (current state: $POD_STATUS)"
+                      exit 1
+                  fi
+                  
+                  # Additional check to ensure pod is ready
+                  READY=$(kubectl get pod $POD_NAME -o jsonpath="{.status.containerStatuses[0].ready}")
+                  if [ "$READY" != "true" ]; then
+                      echo "Error: New pod is not ready"
+                      exit 1
+                  fi
+
+                  # Run tests with tensor-fusion enabled
+                  echo "=== Running tests with tensor-fusion ENABLED ==="
+                  for MODEL in $MODEL_LIST; do
+                      echo "Testing model: $MODEL with tensor-fusion ENABLED"
+                      echo "---------------------------------------------------------"
+                      TEST_CMD="python3 test.py -k \"test_${MODEL}_eval_cuda\" -t ${TEST_TIMEOUT}"
+                      echo "Executing: $TEST_CMD"
+                      TEST_OUTPUT=$(timeout 7200 kubectl exec $POD_NAME -- python3 test.py -k "test_${MODEL}_eval_cuda" -t ${TEST_TIMEOUT} 2>&1)
+                      EXIT_STATUS=$?
+                      if [ $EXIT_STATUS -ne 0 ]; then
+                          echo "Error: Test command failed or timed out for model $MODEL (exit status: $EXIT_STATUS)"
+                          echo "TEST_OUTPUT: $TEST_OUTPUT"
+                          continue
+                      fi
+                      MODEL_INIT=$(echo "$TEST_OUTPUT" | grep -o "Model initialization time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Model initialization time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      EVAL_TIME=$(echo "$TEST_OUTPUT" | grep -o "Evaluation time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Evaluation time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      CLEANUP_TIME=$(echo "$TEST_OUTPUT" | grep -o "Cleanup time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Cleanup time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      TOTAL_TIME=$(echo "$TEST_OUTPUT" | grep -o "Total time: [0-9]*\.[0-9]\{1,\} seconds" | sed -E "s/Total time: ([0-9]*\.[0-9]+) seconds/\1/" || echo "N/A")
+                      
+                      # Store results
+                      enabled_results["${MODEL}_init"]=$MODEL_INIT
+                      enabled_results["${MODEL}_eval"]=$EVAL_TIME
+                      enabled_results["${MODEL}_cleanup"]=$CLEANUP_TIME
+                      enabled_results["${MODEL}_total"]=$TOTAL_TIME
+                      
+                      if [ "$MODEL_INIT" = "N/A" ] || [ "$EVAL_TIME" = "N/A" ] || [ "$CLEANUP_TIME" = "N/A" ] || [ "$TOTAL_TIME" = "N/A" ]; then
+                          echo "Warning: Failed to extract some timing information for model $MODEL"
+                          echo "TEST_OUTPUT: $TEST_OUTPUT"
+                      fi
+                      echo "Model initialization time: $MODEL_INIT seconds"
+                      echo "Evaluation time: $EVAL_TIME seconds"
+                      echo "Cleanup time: $CLEANUP_TIME seconds"
+                      echo "Total time: $TOTAL_TIME seconds"
+                      echo "---------------------------------------------------------"
+                  done
+
+                  # Print performance comparison
+                  echo -e "\n=== Performance Comparison (Tensor-Fusion Disabled vs Enabled) ==="
+                  echo "Model Name | Metric | Disabled (s) | Enabled (s) | Speedup"
+                  echo "------------------------------------------------------------"
+                  
+                  for MODEL in $MODEL_LIST; do
+                      for METRIC in "init" "eval" "cleanup" "total"; do
+                          DISABLED_TIME=${disabled_results["${MODEL}_${METRIC}"]}
+                          ENABLED_TIME=${enabled_results["${MODEL}_${METRIC}"]}
+                          
+                          if [ "$DISABLED_TIME" != "N/A" ] && [ "$ENABLED_TIME" != "N/A" ]; then
+                              # Use shell arithmetic instead of bc
+                              SPEEDUP=$(awk "BEGIN {printf \"%.2f\", $DISABLED_TIME / $ENABLED_TIME}")
+                              printf "%-15s | %-6s | %-11s | %-10s | %.2fx\n" "$MODEL" "$METRIC" "$DISABLED_TIME" "$ENABLED_TIME" "$SPEEDUP"
+                          else
+                              printf "%-15s | %-6s | %-11s | %-10s | N/A\n" "$MODEL" "$METRIC" "$DISABLED_TIME" "$ENABLED_TIME"
+                          fi
+                      done
+                      echo "------------------------------------------------------------"
+                  done
+
+                  echo "All tests completed!"
+              resources: {}
+          restartPolicy: OnFailure
+          terminationGracePeriodSeconds: 30
+          dnsPolicy: ClusterFirst
+          securityContext: {}
+          schedulerName: default-scheduler 

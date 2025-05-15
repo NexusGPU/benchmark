@@ -1,0 +1,51 @@
+# Default values for torchbench chart
+replicaCount: 1
+
+image:
+  repository: crpi-wpzfqfci37r0ad3n.cn-hangzhou.personal.cr.aliyuncs.com/tensorfusionrobin/tensorfusionrobin
+  tag: latest
+  pullPolicy: Always
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: "cronjob-sa"
+  annotations: {}
+
+podAnnotations:
+  tensor-fusion.ai/generate-workload: "true"
+  tensor-fusion.ai/gpupool: "shared-tensor-fusion-cluster-shared"
+  tensor-fusion.ai/inject-container: "torchbench"
+  tensor-fusion.ai/replicas: "1"
+  tensor-fusion.ai/tflops-limit: "71.2"
+  tensor-fusion.ai/tflops-request: "71.2"
+  tensor-fusion.ai/vram-limit: "24Gi"
+  tensor-fusion.ai/vram-request: "24Gi"
+  tensor-fusion.ai/workload: "torchbench"
+
+podLabels:
+  app: torchbench
+  tensor-fusion.ai/enabled: "true"
+
+resources:
+  limits:
+    cpu: "2"
+    memory: 4Gi
+  requests:
+    cpu: "1"
+    memory: 2Gi
+
+nodeSelector:
+  kubernetes.io/hostname: gpu-2
+
+cronjob:
+  schedule: "0 0 * * *"
+  concurrencyPolicy: Allow
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  image:
+    repository: bitnami/kubectl
+    tag: latest
+    pullPolicy: Always 
