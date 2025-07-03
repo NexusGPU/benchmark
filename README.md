@@ -2,6 +2,53 @@
 
 This Helm chart deploys the TensorFusion Remote/Local vGPU Benchmark application, which includes a deployment for running the benchmark tests and a cronjob for automated testing.
 
+## Benchmark Results
+
+### TorchBenchmark Results (2025-07-04)
+
+To run the TorchBenchmark tests:
+```bash
+cd benchmark
+python3 test_andy.py -k "test_${model_name}_eval_cuda" -t ${eval_times}
+```
+
+| Model | Native | NGPU Mode | Loss(NGPU) | Local | Loss(Local) | Same AZ | Loss(Same AZ) | Cross AZ | Loss(Cross AZ) |
+|-------|---------|------------|------------|--------|-------------|---------|--------------|----------|----------------|
+| basic_gnn_edgecnn | 76.09 s | 76.01 s | -0.11% | 77.88 s | 2.35% | 81.05 s | 6.52% | 77.87 s | - |
+| BERT_pytorch | 481.82 s | 479.31 s | -0.52% | 476.19 s | -1.17% | 477.08 s | -0.98% | 476.77 s | - |
+| basic_gnn_gcn | 16.23 s | 16.32 s | 0.55% | 20.31 s | 25.14% | 31.58 s | 94.58% | 64.67 s | - |
+| basic_gnn_gin | 13.06 s | 12.81 s | -1.91% | 13.69 s | 4.82% | 17.01 s | 30.25% | - | - |
+| hf_Albert | 38.27 s | 36.82 s | -3.79% | 38.66 s | 1.02% | 45.24 s | 18.21% | - | - |
+| hf_Bart | 54.29 s | 53.81 s | -0.88% | 65.62 s | 20.87% | 102.89 s | 89.52% | - | - |
+| hf_Bert | 33.95 s | 33.33 s | -1.83% | 37.57 s | 10.66% | 48.47 s | 42.77% | - | - |
+| llama | 62.04 s | 60.60 s | -2.32% | 61.45 s | -0.95% | 62.55 s | 0.82% | - | - |
+| hf_distil_whisper | 175.42 s | 175.95 s | 0.30% | 237.67 s | 35.49% | 375.54 s | 114.08% | 375.54 s | - |
+| hf_clip | 358.16 s | 356.68 s | -0.41% | 354.35 s | -1.06% | 355.09 s | -0.86% | 371.04 s | 3.60% |
+| hf_Whisper | 59.91 s | 59.99 s | 0.13% | 73.62 s | 22.88% | 100.14 s | 67.15% | 177.26 s | 195.88% |
+| **Average Loss** | - | - | **-0.98%** | - | **10.91%** | - | **42.00%** | - | - |
+
+### MLPerf Results (2025-07-04)
+
+To run the MLPerf benchmark:
+```bash
+mlcr run-mlperf,inference,_full,_r5.0-dev \
+    --model=bert-99 \
+    --implementation=reference \
+    --framework=pytorch \
+    --category=edge \
+    --scenario=SingleStream \
+    --execution_mode=valid \
+    --device=cuda \
+    --quiet --rerun
+```
+
+| Mode | Time | Loss |
+|------|------|------|
+| Native | 27.008 s | - |
+| Local | 29.930 s | 10.82% |
+| Same AZ | 33.341 s | 23.45% |
+| Cross AZ | 41.597 s | 54.02% |
+
 ## Prerequisites
 
 - Kubernetes 1.19+
