@@ -9,14 +9,14 @@ This Helm chart deploys the TensorFusion Remote/Local vGPU Benchmark application
 To run the TorchBenchmark tests:
 ```bash
 cd benchmark
-python3 test_andy.py -k "test_${model_name}_eval_cuda" -t ${eval_times}
+python3 test.py -k "test_${model_name}_eval_cuda" -t ${eval_times}
 ```
 
 | Model | Native | NGPU Mode | Loss(NGPU) | Local | Loss(Local) | Same AZ | Loss(Same AZ) | Cross AZ | Loss(Cross AZ) |
 |-------|---------|------------|------------|--------|-------------|---------|--------------|----------|----------------|
-| basic_gnn_edgecnn | 76.09 s | 76.01 s | -0.11% | 77.88 s | 2.35% | 81.05 s | 6.52% | 77.87 s | - |
-| BERT_pytorch | 481.82 s | 479.31 s | -0.52% | 476.19 s | -1.17% | 477.08 s | -0.98% | 476.77 s | - |
-| basic_gnn_gcn | 16.23 s | 16.32 s | 0.55% | 20.31 s | 25.14% | 31.58 s | 94.58% | 64.67 s | - |
+| basic_gnn_edgecnn | 76.09 s | 76.01 s | -0.11% | 77.88 s | 2.35% | 81.05 s | 6.52% | - | - |
+| BERT_pytorch | 481.82 s | 479.31 s | -0.52% | 476.19 s | -1.17% | 477.08 s | -0.98% | - | - |
+| basic_gnn_gcn | 16.23 s | 16.32 s | 0.55% | 20.31 s | 25.14% | 31.58 s | 94.58% | - | - |
 | basic_gnn_gin | 13.06 s | 12.81 s | -1.91% | 13.69 s | 4.82% | 17.01 s | 30.25% | - | - |
 | hf_Albert | 38.27 s | 36.82 s | -3.79% | 38.66 s | 1.02% | 45.24 s | 18.21% | - | - |
 | hf_Bart | 54.29 s | 53.81 s | -0.88% | 65.62 s | 20.87% | 102.89 s | 89.52% | - | - |
