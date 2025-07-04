@@ -49,6 +49,29 @@ mlcr run-mlperf,inference,_full,_r5.0-dev \
 | Same AZ | 33.341 s | 23.45% |
 | Cross AZ | 41.597 s | 54.02% |
 
+### Simulating AZ Latencies
+
+To simulate different AZ (Availability Zone) network conditions, you can use the Linux Traffic Control (tc) tool to inject artificial network latency:
+
+1. Inject network latency:
+```bash
+# For Same AZ simulation (0.3ms latency)
+tc qdisc add dev lo root netem delay 0.3ms
+
+# For Cross AZ simulation (1ms latency)
+tc qdisc add dev lo root netem delay 1ms
+```
+
+2. Verify the latency:
+```bash
+ping target_host
+```
+
+3. Remove the artificial latency when done:
+```bash
+tc qdisc del dev lo root
+```
+
 ## Prerequisites
 
 - Kubernetes 1.19+
